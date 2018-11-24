@@ -161,7 +161,12 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         if self.is_transform:
             img = self.transform(img)
         img, lbl = self.get_random_instance(img, lbl, ins)
+
+        # TODO: see whether or not filtering out images is needed in advance
+        if img is None:
+            return self.__getitem__(np.random.randint(len(self)))
         
+        print(img.shape)
         img = Image.fromarray(np.uint8(img))
         lbl = Image.fromarray(np.uint8(lbl))
         
@@ -216,7 +221,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         ins[ins == -1] = 0
         return ins.astype(np.uint8)
     
-    def crop_bbox(self, img, lbl, bbox, factor=1.10, scale_noise=0.10, offset_noise=0.10):
+    def crop_bbox(self, img, lbl, bbox, factor=1.15, scale_noise=0.10, offset_noise=0.10):
         # assumes imgs have the same size in the first two dimensions
         H, W, _ = img.shape
         x1, x2, y1, y2 = bbox
@@ -230,13 +235,10 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         y1, y2 = max(0, y1), min(y2, H)
         return img[y1:y2,x1:x2,:], lbl[y1:y2,x1:x2]
     
-    def get_random_instance(self, img, lbl, ins):
-        instances = np.unique(ins)
-        instances = [i for i in instances if i != -1]
-        ins_num = np.random.randint(len(instances))
+    def get_bbox(self, ins, ins_id):
         # get instance bitmap
         ins_bmp = np.zeros_like(ins)
-        ins_bmp[ins == instances[ins_num]] = 1
+        ins_bmp[ins == ins_id] = 1
         row_sums = ins_bmp.sum(axis=0)
         col_sums = ins_bmp.sum(axis=1)
         col_occupied = row_sums.nonzero()
@@ -245,5 +247,25 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         x2 = np.max(col_occupied)
         y1 = np.min(row_occupied)
         y2 = np.max(row_occupied)
+        return x1, x2+1, y1, y2+1, ins_bmp
+        
+    def get_random_instance(self, img, lbl, ins):
+        instances = np.unique(ins)
+        instances = [i for i in instances if i != -1]
+        ins_num = np.random.randint(len(instances))
+        x1, x2, y1, y2, ins_bmp = self.get_bbox(ins, instances[ins_num])
+        
+        # filter out bbox with extreme sizes
+        while len(instances) > 0 and (x2 - x1 < 7 or y2 - y1 < 7
+            or x2 - x1 > 1000 or y2 - y1 > 1000):
+            del instances[ins_num]
+            if (len(instances) == 0):
+                print('No valid bounding box in image!')
+                return None, None
+                
+            print('found invalid bbox!')
+            ins_num = np.random.randint(len(instances))
+            x1, x2, y1, y2, ins_bmp = self.get_bbox(ins, instances[ins_num])
+            
         bbox = [x1, x2, y1, y2]
-        return self.crop_bbox(img, ins_bmp, bbox, factor=1.15, scale_noise=0., offset_noise=0.)
+        return self.crop_bbox(img, ins_bmp, bbox)
