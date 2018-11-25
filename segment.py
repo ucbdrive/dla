@@ -21,6 +21,7 @@ from torch.autograd import Variable
 import dla_up
 import data_transforms as transforms
 import dataset
+from cityscapes_single_instance import CityscapesSingleInstanceDataset
 
 try:
     from modules import batchnormsync
@@ -165,7 +166,7 @@ def validate(val_loader, model, criterion, eval_score=None, print_freq=10):
                                torch.nn.modules.loss.MSELoss]:
             target = target.float()
         input = input.cuda()
-        target = target.cuda(async=True)
+        target = target.cuda(non_blocking=True)
         input_var = torch.autograd.Variable(input, volatile=True)
         target_var = torch.autograd.Variable(target, volatile=True)
 
@@ -251,7 +252,7 @@ def train(train_loader, model, criterion, optimizer, epoch,
             target = target.float()
 
         input = input.cuda()
-        target = target.cuda(async=True)
+        target = target.cuda(non_blocking=True)
         input_var = torch.autograd.Variable(input)
         target_var = torch.autograd.Variable(target)
 
@@ -328,18 +329,12 @@ def train_seg(args):
               transforms.ToTensor(),
               normalize])
     train_loader = torch.utils.data.DataLoader(
-        SegList(data_dir, 'train', transforms.Compose(t),
-                binary=(args.classes == 2)),
+        CityscapesSingleInstanceDataset(data_dir, 'train'),
         batch_size=batch_size, shuffle=True, num_workers=num_workers,
         pin_memory=True
     )
     val_loader = torch.utils.data.DataLoader(
-        SegList(data_dir, 'val', transforms.Compose([
-            transforms.RandomCrop(crop_size),
-            # transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]), binary=(args.classes == 2)),
+        CityscapesSingleInstanceDataset(data_dir, 'val'),
         batch_size=batch_size, shuffle=False, num_workers=num_workers,
         pin_memory=True
     )
