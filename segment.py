@@ -598,13 +598,15 @@ def test_seg(args):
     t = []
     if args.crop_size > 0:
         t.append(transforms.PadToSize(args.crop_size))
-    t.extend([transforms.ToTensor(), normalize])
-    if args.ms:
-        data = SegListMS(data_dir, phase, transforms.Compose(t), scales)
-    else:
-        data = SegList(data_dir, phase, transforms.Compose(t),
-                       out_name=True, out_size=True,
-                       binary=args.classes == 2)
+
+    t.extend([transforms.RandomHorizontalFlip(),
+              transforms.ToTensor(),
+              normalize])
+    test_loader = torch.utils.data.DataLoader(
+        CityscapesSingleInstanceDataset(data_dir, 'val'),
+        batch_size=batch_size, shuffle=False, num_workers=num_workers,
+        pin_memory=False
+    )
     test_loader = torch.utils.data.DataLoader(
         data,
         batch_size=batch_size, shuffle=False, num_workers=num_workers,

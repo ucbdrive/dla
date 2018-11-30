@@ -1,5 +1,6 @@
 # Adapted from https://github.com/meetshah1995/pytorch-semseg
 import os
+import json
 import torch
 import numpy as np
 import scipy.misc as m
@@ -58,6 +59,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         scale_transform=Compose([Resize([224, 224])]),
         img_norm=True,
         version="cityscapes",
+        
     ):
         """__init__
         :param root:
@@ -77,15 +79,14 @@ class CityscapesSingleInstanceDataset(data.Dataset):
             img_size if isinstance(img_size, tuple) else (img_size, img_size)
         )
         self.mean = np.array(self.mean_rgb[version])
-        self.files = {}
 
         self.images_base = os.path.join(self.root, "leftImg8bit", self.split)
         self.annotations_base = os.path.join(
             self.root, "gtFine", self.split
         )
 
-        self.files[split] = recursive_glob(rootdir=self.images_base, suffix=".png")
-
+        img_paths = recursive_glob(rootdir=self.images_base, suffix=".png")
+        
         self.void_classes = [0, 1, 2, 3, 4, 5, 6, 9, 10, 14, 15, 16, 18, 29, 30, -1,7,
             8,
             11,
@@ -121,53 +122,98 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         self.ignore_index = 250
         self.class_map = dict(zip(self.valid_classes, range(8)))
 
-        if not self.files[split]:
+        self.img_paths, self.labels_coords, self.img_index_of_label = self._prepare_labels(img_paths)
+        
+        if not self.img_paths:
             raise Exception(
                 "No files for split=[%s] found in %s" % (split, self.images_base)
             )
 
-        print("Found %d %s images" % (len(self.files[split]), split))
+        print("Found %d %s images" % (len(self.img_paths), split))
 
+    def _prepare_labels(self, img_paths):
+        json_path = '{}_cityscapes_single_instance_info.json'.format(self.split)
+        if not os.path.exists(json_path):
+            print("No bbox info found. Preparing labels might take some time.")
+            labels_coords = []
+            valid_img_paths = []
+            img_index_of_label = []
+            for i, img_path in enumerate(img_paths):
+                print('{}/{}'.format(i, len(img_paths)))
+                img_path = img_path.rstrip()
+                lbl_path = os.path.join(
+                    self.annotations_base,
+                    img_path.split(os.sep)[-2],
+                    os.path.basename(img_path)[:-15] + "gtFine_labelIds.png",
+                )
+                ins_path = os.path.join(
+                    self.annotations_base,
+                    img_path.split(os.sep)[-2],
+                    os.path.basename(img_path)[:-15] + "gtFine_instanceIds.png",
+                )
+
+                lbl = m.imread(lbl_path)
+                lbl = self.encode_segmap(np.array(lbl, dtype=np.uint8))
+
+                ins = m.imread(ins_path)
+                ins = self.encode_insmap(np.array(ins, dtype=np.uint16), lbl)
+
+                instances_coords = self._get_instances_coords(lbl, ins)
+                if len(instances_coords) > 0:
+                    valid_img_paths += [img_path]
+                    labels_coords += instances_coords
+                    img_index_of_label += [len(valid_img_paths) - 1] * len(instances_coords)
+                    
+            with open(json_path, 'w') as f:
+                json.dump({'valid_img_paths': valid_img_paths, 'labels_coords': labels_coords, 'img_index_of_label': img_index_of_label}, f)
+                print('Saved bboxes to local.')
+        else:
+            with open(json_path) as f:
+                json_file = json.load(f)
+            valid_img_paths = json_file['valid_img_paths']
+            labels_coords = json_file['labels_coords']
+            img_index_of_label = json_file['img_index_of_label']
+            
+        return valid_img_paths, labels_coords, img_index_of_label
+        
+    def _get_instances_coords(self, lbl, ins):
+        instances = np.unique(ins)
+        instances = [i for i in instances if i != -1]
+        
+        instances_coords = []
+        for ins_num in instances:
+            x1, x2, y1, y2, ins_bmp = self.get_bbox(ins, ins_num)
+            # filter out bbox with extreme sizes
+            if (x2 - x1 >= 7 and y2 - y1 >= 7) and (x2 - x1 <= 1000 and y2 - y1 <= 1000):
+                instances_coords += [[x1, x2, y1, y2]]
+        
+        return instances_coords
+        
     def __len__(self):
         """__len__"""
-        return len(self.files[self.split])
+        return len(self.labels_coords)
 
     def __getitem__(self, index):
         """__getitem__
         :param index:
         """
-        img_path = self.files[self.split][index].rstrip()
+        img_path = self.img_paths[self.img_index_of_label[index]]
         lbl_path = os.path.join(
             self.annotations_base,
             img_path.split(os.sep)[-2],
             os.path.basename(img_path)[:-15] + "gtFine_labelIds.png",
         )
-        ins_path = os.path.join(
-            self.annotations_base,
-            img_path.split(os.sep)[-2],
-            os.path.basename(img_path)[:-15] + "gtFine_instanceIds.png",
-        )
-
+        
         img = m.imread(img_path)
         img = np.array(img, dtype=np.uint8)
 
         lbl = m.imread(lbl_path)
         lbl = self.encode_segmap(np.array(lbl, dtype=np.uint8))
-
-        ins = m.imread(ins_path)
-        ins = self.encode_insmap(np.array(ins, dtype=np.uint16), lbl)
-#         if self.augmentations is not None:
-#             img, [lbl, ins] = self.augmentations(img, (lbl, ins))
-        if self.is_transform:
-            img = self.transform(img)
-        img, lbl = self.get_random_instance(img, lbl, ins)
-
-        # TODO: see whether or not filtering out images is needed in advance
-        if img is None:
-            return self.__getitem__(np.random.randint(len(self)))
+        
+        bbox = self.labels_coords[index]
+        img, lbl = self.crop_bbox(img, lbl, bbox)
         
         img = Image.fromarray(img)
-        
         lbl = Image.fromarray(lbl)
         
         img, [lbl] = self.scale_transform(img, [lbl])
@@ -185,7 +231,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         :param lbl:
         """
         img = img[:, :, ::-1]  # RGB -> BGR
-        img = img.astype(np.float64)
+        img = img.astype(np.float)
         img -= self.mean
         
         return img
@@ -245,28 +291,9 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         col_sums = ins_bmp.sum(axis=1)
         col_occupied = row_sums.nonzero()
         row_occupied = col_sums.nonzero()
-        x1 = np.min(col_occupied)
-        x2 = np.max(col_occupied)
-        y1 = np.min(row_occupied)
-        y2 = np.max(row_occupied)
+        x1 = int(np.min(col_occupied))
+        x2 = int(np.max(col_occupied))
+        y1 = int(np.min(row_occupied))
+        y2 = int(np.max(row_occupied))
         return x1, x2+1, y1, y2+1, ins_bmp
         
-    def get_random_instance(self, img, lbl, ins):
-        instances = np.unique(ins)
-        instances = [i for i in instances if i != -1]
-        ins_num = np.random.randint(len(instances))
-        x1, x2, y1, y2, ins_bmp = self.get_bbox(ins, instances[ins_num])
-        
-        # filter out bbox with extreme sizes
-        while len(instances) > 0 and (x2 - x1 < 7 or y2 - y1 < 7
-            or x2 - x1 > 1000 or y2 - y1 > 1000):
-            del instances[ins_num]
-            if (len(instances) == 0):
-                print('No valid bounding box in image!')
-                return None, None
-                
-            ins_num = np.random.randint(len(instances))
-            x1, x2, y1, y2, ins_bmp = self.get_bbox(ins, instances[ins_num])
-        
-        bbox = [x1, x2, y1, y2]
-        return self.crop_bbox(img, ins_bmp, bbox)
