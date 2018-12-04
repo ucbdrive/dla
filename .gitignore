@@ -3,4 +3,5 @@ __pycache__
 data
 *.tar
 *.pth
+logs
 *.json

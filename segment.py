@@ -17,6 +17,7 @@ import torch.utils.data
 from torch import nn
 import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
+from tensorboardX import SummaryWriter
 
 import dla_up
 import data_transforms as transforms
@@ -229,7 +230,7 @@ def accuracy(output, target):
     return score.data[0]
 
 
-def train(train_loader, model, criterion, optimizer, epoch,
+def train(train_loader, model, criterion, optimizer, epoch, writer,
           eval_score=None, print_freq=10):
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -276,6 +277,16 @@ def train(train_loader, model, criterion, optimizer, epoch,
         end = time.time()
 
         if i % print_freq == 0:
+            # broadcast results to tensorboard
+            step = i + len(train_loader) * epoch
+            writer.add_scalar('train/loss', losses.avg, step)
+            writer.add_scalar('train/score_avg', scores.avg, step)
+            writer.add_scalar('train/score', scores.val, step)
+            
+            writer.add_image('train/image', input[0].cpu().numpy(), step)
+            writer.add_image('train/gt', target[0].cpu().numpy(), step)
+            writer.add_image('train/predicted', output[0].detach().cpu().numpy(), step)
+            
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
@@ -291,7 +302,7 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
         shutil.copyfile(filename, 'model_best.pth.tar')
 
 
-def train_seg(args):
+def train_seg(args, writer):
     batch_size = args.batch_size
     num_workers = args.workers
     crop_size = args.crop_size
@@ -367,7 +378,7 @@ def train_seg(args):
         lr = adjust_learning_rate(args, optimizer, epoch)
         print('Epoch: [{0}]\tlr {1:.06f}'.format(epoch, lr))
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch,
+        train(train_loader, model, criterion, optimizer, epoch, writer,
               eval_score=accuracy)
 
         # evaluate on validation set
@@ -577,7 +588,7 @@ def test_ms(eval_data_loader, model, num_classes, scales,
         return round(np.nanmean(ious), 2)
 
 
-def test_seg(args):
+def test_seg(args, writer):
     batch_size = args.batch_size
     num_workers = args.workers
     phase = args.phase
@@ -723,10 +734,11 @@ def main():
         else:
             print('batch normalization synchronization across GPUs '
                   'is not imported.')
+    writer = SummaryWriter('logs')
     if args.cmd == 'train':
-        train_seg(args)
+        train_seg(args, writer)
     elif args.cmd == 'test':
-        test_seg(args)
+        test_seg(args, writer)
 
 
 if __name__ == '__main__':
