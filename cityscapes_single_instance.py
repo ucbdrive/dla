@@ -185,8 +185,11 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         instances_coords = []
         for ins_num in instances:
             x1, x2, y1, y2, ins_bmp = self.get_bbox(ins, ins_num)
-            # filter out bbox with extreme sizes
-            if (x2 - x1 >= 20 and y2 - y1 >= 20) and (x2 - x1 <= 1000 and y2 - y1 <= 1000):
+            # filter out bbox with extreme sizes and irregular shapes
+            occupy_ratio = np.sum(ins_bmp) / ((x2 - x1) * (y2 - y1))
+            
+            if (x2 - x1 >= 50 and y2 - y1 >= 50) and (x2 - x1 <= 1000 and y2 - y1 <= 1000) \
+               and occupy_ratio > 0.25:
                 instances_coords += [([x1, x2, y1, y2], ins_num)]
         
         return instances_coords

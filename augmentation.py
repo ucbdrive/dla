@@ -235,7 +235,7 @@ class Resize(object):
     def __call__(self, img, masks):
         return (
             img.resize(self.size, Image.BILINEAR),
-            [mask.resize(self.size, Image.NEAREST) for mask in masks],
+            [mask.resize(self.size, Image.BILINEAR) for mask in masks],
         )
 
 
