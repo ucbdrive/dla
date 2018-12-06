@@ -283,9 +283,11 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
             writer.add_scalar('train/score_avg', scores.avg, step)
             writer.add_scalar('train/score', scores.val, step)
             
+            prediction = np.argmax(output.detach().cpu().numpy(), axis=1)
+            
             writer.add_image('train/image', input[0].cpu().numpy(), step)
             writer.add_image('train/gt', target[0].cpu().numpy(), step)
-            writer.add_image('train/predicted', output[0].detach().cpu().numpy(), step)
+            writer.add_image('train/predicted', prediction[0], step)
             
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'

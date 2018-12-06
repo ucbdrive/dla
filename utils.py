@@ -52,7 +52,7 @@ def reg_scalor(grad_yx):
 def get_boundary_map(segmap):
     bitmap = np.zeros_like(segmap)
     im2, contours, hierarchy = cv2.findContours(np.asarray(segmap), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    bitmap = cv2.drawContours(bitmap, contours, -1, 1, 1)
+    bitmap = cv2.drawContours(bitmap, contours, -1, 1, 1) * 255
     return Image.fromarray(np.uint8(bitmap))
 
 def distance_transform(mask, clip_background_distance=True, normalized=True):

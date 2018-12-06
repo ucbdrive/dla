@@ -122,7 +122,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         self.ignore_index = 250
         self.class_map = dict(zip(self.valid_classes, range(8)))
 
-        self.img_paths, self.labels_coords, self.img_index_of_label = self._prepare_labels(img_paths)
+        self.img_paths, self.labels_coords, self.img_index_of_label, self.ins_ids = self._prepare_labels(img_paths)
         
         if not self.img_paths:
             raise Exception(
@@ -138,6 +138,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
             labels_coords = []
             valid_img_paths = []
             img_index_of_label = []
+            ins_ids = []
             for i, img_path in enumerate(img_paths):
                 print('{}/{}'.format(i, len(img_paths)))
                 img_path = img_path.rstrip()
@@ -161,11 +162,11 @@ class CityscapesSingleInstanceDataset(data.Dataset):
                 instances_coords = self._get_instances_coords(lbl, ins)
                 if len(instances_coords) > 0:
                     valid_img_paths += [img_path]
-                    labels_coords += instances_coords
+                    labels_coords += [i[0] for i in instances_coords]
                     img_index_of_label += [len(valid_img_paths) - 1] * len(instances_coords)
-                    
+                    ins_ids += [i[1] for i in instances_coords]
             with open(json_path, 'w') as f:
-                json.dump({'valid_img_paths': valid_img_paths, 'labels_coords': labels_coords, 'img_index_of_label': img_index_of_label}, f)
+                json.dump({'valid_img_paths': valid_img_paths, 'labels_coords': labels_coords, 'img_index_of_label': img_index_of_label, 'ins_ids': ins_ids}, f)
                 print('Saved bboxes to local.')
         else:
             with open(json_path) as f:
@@ -173,19 +174,20 @@ class CityscapesSingleInstanceDataset(data.Dataset):
             valid_img_paths = json_file['valid_img_paths']
             labels_coords = json_file['labels_coords']
             img_index_of_label = json_file['img_index_of_label']
+            ins_ids = json_file['ins_ids']
             
-        return valid_img_paths, labels_coords, img_index_of_label
+        return valid_img_paths, labels_coords, img_index_of_label, ins_ids
         
     def _get_instances_coords(self, lbl, ins):
-        instances = np.unique(ins)
+        instances = np.unique(ins).tolist()
         instances = [i for i in instances if i != -1]
         
         instances_coords = []
         for ins_num in instances:
             x1, x2, y1, y2, ins_bmp = self.get_bbox(ins, ins_num)
             # filter out bbox with extreme sizes
-            if (x2 - x1 >= 7 and y2 - y1 >= 7) and (x2 - x1 <= 1000 and y2 - y1 <= 1000):
-                instances_coords += [[x1, x2, y1, y2]]
+            if (x2 - x1 >= 20 and y2 - y1 >= 20) and (x2 - x1 <= 1000 and y2 - y1 <= 1000):
+                instances_coords += [([x1, x2, y1, y2], ins_num)]
         
         return instances_coords
         
@@ -198,32 +200,42 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         :param index:
         """
         img_path = self.img_paths[self.img_index_of_label[index]]
+        
+        img = m.imread(img_path)
+        img = np.array(img, dtype=np.uint8)
+
         lbl_path = os.path.join(
             self.annotations_base,
             img_path.split(os.sep)[-2],
             os.path.basename(img_path)[:-15] + "gtFine_labelIds.png",
         )
-        
-        img = m.imread(img_path)
-        img = np.array(img, dtype=np.uint8)
+        ins_path = os.path.join(
+            self.annotations_base,
+            img_path.split(os.sep)[-2],
+            os.path.basename(img_path)[:-15] + "gtFine_instanceIds.png",
+        )
 
         lbl = m.imread(lbl_path)
         lbl = self.encode_segmap(np.array(lbl, dtype=np.uint8))
+
+        ins = m.imread(ins_path)
+        ins = self.encode_insmap(np.array(ins, dtype=np.uint16), lbl)
         
         bbox = self.labels_coords[index]
-        img, lbl = self.crop_bbox(img, lbl, bbox)
+        img, ins = self.crop_bbox(img, ins, bbox)
+        
+        ins[ins != self.ins_ids[index]] = 0
+        ins[ins == self.ins_ids[index]] = 1
         
         img = Image.fromarray(img)
-        lbl = Image.fromarray(lbl)
-        
-        img, [lbl] = self.scale_transform(img, [lbl])
-        lbl = get_boundary_map(lbl)
-#         lbl = distance_transform(lbl)
+        ins = Image.fromarray(ins)
+        img, [ins] = self.scale_transform(img, [ins])
+        ins = get_boundary_map(ins)
         
         img = tf.to_tensor(img).float()
-        lbl = (tf.to_tensor(lbl).squeeze(0) * 255.).long()
-
-        return img, lbl
+        ins = (tf.to_tensor(ins).long().squeeze(0))
+        
+        return img, ins
         
     def transform(self, img):
         """transform
