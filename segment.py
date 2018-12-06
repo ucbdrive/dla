@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+from datetime import datetime
 import os
 import threading
 from os.path import exists, join, split, dirname
@@ -760,7 +761,9 @@ def main():
         else:
             print('batch normalization synchronization across GPUs '
                   'is not imported.')
-    writer = SummaryWriter('logs')
+
+    timestamp = datetime.fromtimestamp(time.time()).strftime('%Y%n%d-%H:%M')
+    writer = SummaryWriter('logs/{}'.format(timestamp))
     if args.cmd == 'train':
         train_seg(args, writer)
     elif args.cmd == 'test':
