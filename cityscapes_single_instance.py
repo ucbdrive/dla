@@ -57,9 +57,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         img_size=(512, 1024),
         augmentations=None,
         scale_transform=Compose([Resize([224, 224])]),
-        img_norm=True,
         version="cityscapes",
-        
     ):
         """__init__
         :param root:
@@ -73,13 +71,12 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         self.is_transform = is_transform
         self.augmentations = augmentations
         self.scale_transform = scale_transform
-        self.img_norm = img_norm
+        
         self.n_classes = 8 #19
         self.img_size = (
             img_size if isinstance(img_size, tuple) else (img_size, img_size)
         )
-        self.mean = np.array(self.mean_rgb[version])
-
+        
         self.images_base = os.path.join(self.root, "leftImg8bit", self.split)
         self.annotations_base = os.path.join(
             self.root, "gtFine", self.split
@@ -131,6 +128,12 @@ class CityscapesSingleInstanceDataset(data.Dataset):
 
         print("Found %d %s images" % (len(self.img_paths), split))
 
+    def load_dataset_info(self):
+        info_dir = os.path.join(self.root, 'info.json')
+        with open(info_dir) as f:
+            info = json.load(f)
+        return info
+        
     def _prepare_labels(self, img_paths):
         json_path = '{}_cityscapes_single_instance_info.json'.format(self.split)
         if not os.path.exists(json_path):
@@ -233,23 +236,14 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         img = Image.fromarray(img)
         ins = Image.fromarray(ins)
         img, [ins] = self.scale_transform(img, [ins])
+        
         ins = get_boundary_map(ins)
         
         img = tf.to_tensor(img).float()
         ins = (tf.to_tensor(ins).long().squeeze(0))
         
         return img, ins
-        
-    def transform(self, img):
-        """transform
-        :param img:
-        :param lbl:
-        """
-        img = img[:, :, ::-1]  # RGB -> BGR
-        img = img.astype(np.float)
-        img -= self.mean
-        
-        return img
+    
 
     def decode_segmap(self, temp):
         r = temp.copy()

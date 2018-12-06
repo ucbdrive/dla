@@ -3,6 +3,7 @@ import math
 import numbers
 import random
 import numpy as np
+import torch
 import torchvision.transforms.functional as tf
 
 from PIL import Image, ImageOps
@@ -104,6 +105,21 @@ class AdjustContrast(object):
                                   random.uniform(1 - self.cf, 
                                                  1 + self.cf)), masks
 
+
+class Normalize(object):
+    def __init__(self, mean, std):
+        self.mean = torch.FloatTensor(mean)
+        self.std = torch.FloatTensor(std)
+
+    def __call__(self, image, label=None):
+        for t, m, s in zip(image, self.mean, self.std):
+            t.sub_(m).div_(s)
+        if label is None:
+            return image
+        else:
+            return image, label
+            
+            
 class CenterCrop(object):
     def __init__(self, size):
         if isinstance(size, numbers.Number):

@@ -23,6 +23,7 @@ import dla_up
 import data_transforms as transforms
 import dataset
 from cityscapes_single_instance import CityscapesSingleInstanceDataset
+from augmentation import Normalize
 
 try:
     from modules import batchnormsync
@@ -241,6 +242,10 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
     model.train()
 
     end = time.time()
+    
+    # normalize
+    info = train_loader.dataset.load_dataset_info()
+    normalize = Normalize(mean=info['mean'], std=info['std'])
 
     for i, (input, target) in enumerate(train_loader):
         # measure data loading time
@@ -251,12 +256,17 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
         if type(criterion) in [torch.nn.modules.loss.L1Loss,
                                torch.nn.modules.loss.MSELoss]:
             target = target.float()
-
+        
+        if i % print_freq == 0:
+            step = i + len(train_loader) * epoch
+            writer.add_image('train/image', input[0].numpy(), step)
+            
+        input = normalize(input)
         input = input.cuda()
         target = target.cuda(non_blocking=True)
         input_var = torch.autograd.Variable(input)
         target_var = torch.autograd.Variable(target)
-
+        
         # compute output
         output = model(input_var)[0]
         loss = criterion(output, target_var)
@@ -278,14 +288,12 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
 
         if i % print_freq == 0:
             # broadcast results to tensorboard
-            step = i + len(train_loader) * epoch
             writer.add_scalar('train/loss', losses.avg, step)
             writer.add_scalar('train/score_avg', scores.avg, step)
             writer.add_scalar('train/score', scores.val, step)
             
             prediction = np.argmax(output.detach().cpu().numpy(), axis=1)
             
-            writer.add_image('train/image', input[0].cpu().numpy(), step)
             writer.add_image('train/gt', target[0].cpu().numpy(), step)
             writer.add_image('train/predicted', prediction[0], step)
             
