@@ -154,7 +154,7 @@ class SegListMS(torch.utils.data.Dataset):
             assert len(self.image_list) == len(self.label_list)
 
 
-def validate(val_loader, model, criterion, eval_score=None, print_freq=10):
+def validate(val_loader, model, criterion, epoch, writer, eval_score=None, print_freq=10):
     batch_time = AverageMeter()
     losses = AverageMeter()
     score = AverageMeter()
@@ -167,6 +167,11 @@ def validate(val_loader, model, criterion, eval_score=None, print_freq=10):
         if type(criterion) in [torch.nn.modules.loss.L1Loss,
                                torch.nn.modules.loss.MSELoss]:
             target = target.float()
+
+        if i % print_freq == 0:
+            step = i + len(val_loader) * epoch
+            writer.add_image('validate/image', input[0].numpy(), step)
+
         input = input.cuda()
         target = target.cuda(non_blocking=True)
         input_var = torch.autograd.Variable(input, volatile=True)
@@ -187,6 +192,16 @@ def validate(val_loader, model, criterion, eval_score=None, print_freq=10):
         end = time.time()
 
         if i % print_freq == 0:
+            writer.add_scalar('validate/loss', losses.avg, step)
+            writer.add_scalar('validate/score_avg', score.avg, step)
+            writer.add_scalar('validate/score', score.val, step)
+            
+            prediction = np.argmax(output.detach().cpu().numpy(), axis=1)
+            prob = torch.nn.functional.softmax(output.detach().cpu(), dim=1).numpy()
+
+            writer.add_image('validate/gt', target[0].cpu().numpy(), step)
+            writer.add_image('validate/predicted', prediction[0], step)
+            writer.add_image('validate/prob', prob[0][1], step)
             print('Test: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
@@ -293,10 +308,11 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
             writer.add_scalar('train/score', scores.val, step)
             
             prediction = np.argmax(output.detach().cpu().numpy(), axis=1)
-            
+            prob = torch.nn.functional.softmax(output.detach().cpu(), dim=1).numpy()
+
             writer.add_image('train/gt', target[0].cpu().numpy(), step)
             writer.add_image('train/predicted', prediction[0], step)
-            
+            writer.add_image('train/prob', prob[0][1], step)
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
@@ -380,8 +396,8 @@ def train_seg(args, writer):
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
-    if args.evaluate:
-        validate(val_loader, model, criterion, eval_score=accuracy)
+    if args.evaluate and start_epoch > 0:
+        validate(val_loader, model, criterion, start_epoch-1, writer, eval_score=accuracy)
         return
 
     for epoch in range(start_epoch, args.epochs):
@@ -392,7 +408,7 @@ def train_seg(args, writer):
               eval_score=accuracy)
 
         # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion, eval_score=accuracy)
+        prec1 = validate(val_loader, model, criterion, epoch, writer, eval_score=accuracy)
 
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
