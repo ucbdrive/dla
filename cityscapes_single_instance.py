@@ -56,8 +56,10 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         is_transform=False,
         img_size=(512, 1024),
         augmentations=None,
+        train_transform=Compose([RandomHorizontallyFlip(0.5)]),
         scale_transform=Compose([Resize([224, 224])]),
         version="cityscapes",
+        out_dir=""
     ):
         """__init__
         :param root:
@@ -70,6 +72,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         self.split = split
         self.is_transform = is_transform
         self.augmentations = augmentations
+        self.train_transform = train_transform
         self.scale_transform = scale_transform
         
         self.n_classes = 8 #19
@@ -119,7 +122,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         self.ignore_index = 250
         self.class_map = dict(zip(self.valid_classes, range(8)))
 
-        self.img_paths, self.labels_coords, self.img_index_of_label, self.ins_ids = self._prepare_labels(img_paths)
+        self.img_paths, self.labels_coords, self.img_index_of_label, self.ins_ids = self._prepare_labels(img_paths, out_dir)
         
         if not self.img_paths:
             raise Exception(
@@ -134,8 +137,8 @@ class CityscapesSingleInstanceDataset(data.Dataset):
             info = json.load(f)
         return info
         
-    def _prepare_labels(self, img_paths):
-        json_path = '{}_cityscapes_single_instance_info.json'.format(self.split)
+    def _prepare_labels(self, img_paths, out_dir):
+        json_path = '{}/{}_cityscapes_single_instance_info.json'.format(out_dir, self.split)
         if not os.path.exists(json_path):
             print("No bbox info found. Preparing labels might take some time.")
             labels_coords = []
@@ -183,17 +186,20 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         
     def _get_instances_coords(self, lbl, ins):
         instances = np.unique(ins).tolist()
-        instances = [i for i in instances if i != -1]
+        instances = [i for i in instances if i != 0]
         
         instances_coords = []
         for ins_num in instances:
             x1, x2, y1, y2, ins_bmp = self.get_bbox(ins, ins_num)
             # filter out bbox with extreme sizes and irregular shapes
-            occupy_ratio = np.sum(ins_bmp) / ((x2 - x1) * (y2 - y1))
-            
-            if (x2 - x1 >= 50 and y2 - y1 >= 50) and (x2 - x1 <= 1000 and y2 - y1 <= 1000) \
-               and occupy_ratio > 0.25:
+            area = np.sum(ins_bmp)
+            if (area >= 100):
                 instances_coords += [([x1, x2, y1, y2], ins_num)]
+#             occupy_ratio = np.sum(ins_bmp) / ((x2 - x1) * (y2 - y1))
+            
+#             if (x2 - x1 >= 50 and y2 - y1 >= 50) and (x2 - x1 <= 1000 and y2 - y1 <= 1000) \
+#                and occupy_ratio > 0.25:
+#                 instances_coords += [([x1, x2, y1, y2], ins_num)]
         
         return instances_coords
         
@@ -228,13 +234,16 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         ins = self.encode_insmap(np.array(ins, dtype=np.uint16), lbl)
         
         bbox = self.labels_coords[index]
-        img, ins = self.crop_bbox(img, ins, bbox)
-        
         ins[ins != self.ins_ids[index]] = 0
         ins[ins == self.ins_ids[index]] = 1
         
+        img, ins = self.crop_bbox(img, ins, bbox, random_crop = self.split=='train')
+        
         img = Image.fromarray(img)
         ins = Image.fromarray(ins)
+        if self.split == 'train':
+            img, [ins] = self.train_transform(img, [ins])
+        
         img, [ins] = self.scale_transform(img, [ins])
         
         ins = get_boundary_map(ins)
@@ -269,28 +278,40 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         return mask
     
     def encode_insmap(self, ins, lbl):
-        ins[lbl == self.ignore_index] = -1
-        instances = np.sort(np.unique(ins))
+        ins += 1
+        ins[lbl == self.ignore_index] = 0
+        instances = [i for i in np.sort(np.unique(ins)) if i != 0]
+        
         for i in range(len(instances)):
             ins[ins == instances[i]] = i + 1
-        ins[ins == -1] = 0
         return ins.astype(np.uint8)
     
-    def crop_bbox(self, img, lbl, bbox, factor=1.15, scale_noise=0.10, offset_noise=0.00):
+    def crop_bbox(self, img, lbl, bbox, context_lo=0.1, context_hi=0.2, random_crop=True):
         # assumes imgs have the same size in the first two dimensions
         H, W, _ = img.shape
         x1, x2, y1, y2 = bbox
         
-        cx = (x1+x2)/2 * (1+np.random.random() * offset_noise * 2 - offset_noise)
-        cy = (y1+y2)/2 * (1+np.random.random() * offset_noise * 2 - offset_noise)
-        w = (x2-x1)*(factor + np.random.random() * scale_noise * 2 - scale_noise)
-        h = (y2-y1)*(factor + np.random.random() * scale_noise * 2 - scale_noise)
-        x1, x2 = int(cx-w/2), int(cx+w/2)
-        y1, y2 = int(cy-h/2), int(cy+h/2)
+        cx = (x1+x2)/2
+        cy = (y1+y2)/2
+        if random_crop:
+            factor = 1 + context_lo + np.random.random() * (context_hi - context_lo)
+        else:
+            factor = 1 + (context_lo + context_hi) / 2.
+        w = (x2-x1)*factor
+        h = (y2-y1)*factor
+        l = max(w, h)
+        x1, x2 = int(cx-l/2), int(cx+l/2)
+        y1, y2 = int(cy-l/2), int(cy+l/2)
         x1, x2 = max(0, x1), min(x2, W)
         y1, y2 = max(0, y1), min(y2, H)
         
-        return img[y1:y2,x1:x2,:], lbl[y1:y2,x1:x2]
+        patch_w = max(y2-y1, x2-x1)
+        img_out = np.zeros((patch_w, patch_w, 3))
+        lbl_out = np.zeros((patch_w, patch_w))
+        
+        img_out[:y2-y1, :x2-x1, :] = img[y1:y2,x1:x2,:]
+        lbl_out[:y2-y1, :x2-x1] = lbl[y1:y2,x1:x2] 
+        return img_out.astype(np.uint8), lbl_out.astype(np.uint8)
     
     def get_bbox(self, ins, ins_id):
         # get instance bitmap
@@ -304,5 +325,6 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         x2 = int(np.max(col_occupied))
         y1 = int(np.min(row_occupied))
         y2 = int(np.max(row_occupied))
+        area = (x2 - x1) * (y2 - y1)
         return x1, x2+1, y1, y2+1, ins_bmp
-        
+    

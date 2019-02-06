@@ -5,3 +5,4 @@ data
 *.pth
 logs
 *.json
+out*

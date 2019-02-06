@@ -323,7 +323,8 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
                     data_time=data_time, loss=losses, top1=scores))
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+def save_checkpoint(state, is_best, out_dir, filename='checkpoint.pth.tar'):
+    filename = os.path.join(out_dir, filename)
     torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, 'model_best.pth.tar')
@@ -367,12 +368,12 @@ def train_seg(args, writer):
               transforms.ToTensor(),
               normalize])
     train_loader = torch.utils.data.DataLoader(
-        CityscapesSingleInstanceDataset(data_dir, 'train'),
+        CityscapesSingleInstanceDataset(data_dir, 'train', out_dir=args.out_dir),
         batch_size=batch_size, shuffle=True, num_workers=num_workers,
         pin_memory=True
     )
     val_loader = torch.utils.data.DataLoader(
-        CityscapesSingleInstanceDataset(data_dir, 'val'),
+        CityscapesSingleInstanceDataset(data_dir, 'val', out_dir=args.out_dir),
         batch_size=batch_size, shuffle=False, num_workers=num_workers,
         pin_memory=True
     )
@@ -419,9 +420,11 @@ def train_seg(args, writer):
             'arch': args.arch,
             'state_dict': model.state_dict(),
             'best_prec1': best_prec1,
-        }, is_best, filename=checkpoint_path)
+        }, is_best, args.out_dir, filename=checkpoint_path)
         if (epoch + 1) % args.save_freq == 0:
             history_path = 'checkpoint_{:03d}.pth.tar'.format(epoch + 1)
+            history_path = os.path.join(args.out_dir, history_path)
+            checkpoint_path = os.path.join(args.out_dir, checkpoint_path)
             shutil.copyfile(checkpoint_path, history_path)
 
 
@@ -641,7 +644,7 @@ def test_seg(args, writer):
               transforms.ToTensor(),
               normalize])
     test_loader = torch.utils.data.DataLoader(
-        CityscapesSingleInstanceDataset(data_dir, 'val'),
+        CityscapesSingleInstanceDataset(data_dir, 'val', out_dir=args.out_dir),
         batch_size=batch_size, shuffle=False, num_workers=num_workers,
         pin_memory=False
     )
@@ -691,6 +694,7 @@ def parse_args():
         description='DLA Segmentation and Boundary Prediction')
     parser.add_argument('cmd', choices=['train', 'test'])
     parser.add_argument('-d', '--data-dir', default=None)
+    parser.add_argument('-o', '--out-dir', default=None)
     parser.add_argument('-c', '--classes', default=0, type=int)
     parser.add_argument('-s', '--crop-size', default=0, type=int)
     parser.add_argument('--step', type=int, default=200)
@@ -745,6 +749,7 @@ def parse_args():
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
     assert args.data_dir is not None
+    assert args.out_dir is not None
     assert args.classes > 0
 
     print(' '.join(sys.argv))
