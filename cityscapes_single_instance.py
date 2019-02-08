@@ -57,7 +57,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         img_size=(512, 1024),
         augmentations=None,
         train_transform=Compose([RandomHorizontallyFlip(0.5)]),
-        scale_transform=Compose([Resize([224, 224])]),
+        scale_transform=Compose([Resize([320, 320])]),
         version="cityscapes",
         out_dir=""
     ):
@@ -246,10 +246,10 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         
         img, [ins] = self.scale_transform(img, [ins])
         
-        ins = get_boundary_map(ins)
+        ins = distance_transform(ins)
         
         img = tf.to_tensor(img).float()
-        ins = (tf.to_tensor(ins).long().squeeze(0))
+        ins = (tf.to_tensor(ins).float().squeeze(0))
         
         return img, ins
     

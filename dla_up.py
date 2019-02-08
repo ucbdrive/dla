@@ -147,6 +147,7 @@ class DLASeg(nn.Module):
             up = Identity()
         self.up = up
         self.softmax = nn.LogSoftmax(dim=1)
+        self.relu = nn.ReLU()
 
         for m in self.fc.modules():
             if isinstance(m, nn.Conv2d):
@@ -160,7 +161,7 @@ class DLASeg(nn.Module):
         x = self.base(x)
         x = self.dla_up(x[self.first_level:])
         x = self.fc(x)
-        y = self.softmax(self.up(x))
+        y = self.relu(self.up(x))
         return y, x
 
     def optim_parameters(self, memo=None):

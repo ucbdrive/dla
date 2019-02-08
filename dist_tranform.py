@@ -60,6 +60,20 @@ CITYSCAPE_PALLETE = np.asarray([
     [0, 0, 0]], dtype=np.uint8)
 
 
+class RMSE(nn.Module):
+    def __init__(self, ignore_index=255):
+        super(RMSE, self).__init__()
+        self.ignore_index = ignore_index
+
+    def forward(self, pred, target):
+        # if not pred.shape == target.shape:
+        #     _,_,H,W = target.shape
+        #     pred = F.upsample(pred, size=(H,W), mode='bilinear')
+        mask = (target != self.ignore_index).float()
+        loss = torch.abs(target-pred) * mask
+        loss = torch.mean(loss)
+        return loss
+
 class SegList(torch.utils.data.Dataset):
     def __init__(self, data_dir, phase, transforms, list_dir=None,
                  out_name=False, out_size=False, binary=False):
@@ -166,7 +180,8 @@ def validate(val_loader, model, criterion, epoch, writer, eval_score=None, print
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
         if type(criterion) in [torch.nn.modules.loss.L1Loss,
-                               torch.nn.modules.loss.MSELoss]:
+                               torch.nn.modules.loss.MSELoss,
+                               RMSE]:
             target = target.float()
 
         if i % print_freq == 0:
@@ -196,13 +211,15 @@ def validate(val_loader, model, criterion, epoch, writer, eval_score=None, print
             writer.add_scalar('validate/loss', losses.avg, step)
             writer.add_scalar('validate/score_avg', score.avg, step)
             writer.add_scalar('validate/score', score.val, step)
-            
-            prediction = np.argmax(output.detach().cpu().numpy(), axis=1)
-            prob = torch.nn.functional.softmax(output.detach().cpu(), dim=1).numpy()
 
-            writer.add_image('validate/gt', np.expand_dims(target[0].cpu().numpy(), axis=0), step)
-            writer.add_image('validate/predicted', np.expand_dims(prediction[0], axis=0), step)
-            writer.add_image('validate/prob', np.expand_dims(prob[0][1], axis=0), step)
+            prediction = output.detach().cpu().numpy()
+            # prob = torch.nn.functional.softmax(output.detach().cpu(), dim=1).numpy()
+            gt_img = target[0].cpu().numpy()
+            gt_img[gt_img == 255] = 1.
+
+            writer.add_image('validate/gt', np.expand_dims(gt_img, axis=0), step)
+            writer.add_image('validate/predicted', np.expand_dims(prediction[0][0], axis=0), step)
+            # writer.add_image('validate/prob', np.expand_dims(prob[0][1], axis=0), step)
             print('Test: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
@@ -258,7 +275,7 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
     model.train()
 
     end = time.time()
-    
+
     # normalize
     info = train_loader.dataset.load_dataset_info()
     normalize = Normalize(mean=info['mean'], std=info['std'])
@@ -270,19 +287,20 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
         # pdb.set_trace()
 
         if type(criterion) in [torch.nn.modules.loss.L1Loss,
-                               torch.nn.modules.loss.MSELoss]:
+                               torch.nn.modules.loss.MSELoss,
+                               RMSE]:
             target = target.float()
-        
+
         if i % print_freq == 0:
             step = i + len(train_loader) * epoch
             writer.add_image('train/image', input[0].numpy(), step)
-            
+
         input = normalize(input)
         input = input.cuda()
         target = target.cuda(non_blocking=True)
         input_var = torch.autograd.Variable(input)
         target_var = torch.autograd.Variable(target)
-        
+
         # compute output
         output = model(input_var)[0]
         loss = criterion(output, target_var)
@@ -307,13 +325,15 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
             writer.add_scalar('train/loss', losses.avg, step)
             writer.add_scalar('train/score_avg', scores.avg, step)
             writer.add_scalar('train/score', scores.val, step)
-            
-            prediction = np.argmax(output.detach().cpu().numpy(), axis=1)
-            prob = torch.nn.functional.softmax(output.detach().cpu(), dim=1).numpy()
 
-            writer.add_image('train/gt', np.expand_dims(target[0].cpu().numpy(), axis=0), step)
-            writer.add_image('train/predicted', np.expand_dims(prediction[0], axis=0), step)
-            writer.add_image('train/prob', np.expand_dims(prob[0][1], axis=0), step)
+            prediction = output.detach().cpu().numpy()
+            # prob = torch.nn.functional.softmax(output.detach().cpu(), dim=1).numpy()
+            gt_img = target[0].cpu().numpy()
+            gt_img[gt_img == 255] = 1.
+
+            writer.add_image('train/gt', np.expand_dims(gt_img, axis=0), step)
+            writer.add_image('train/predicted', np.expand_dims(prediction[0][0], axis=0), step)
+            # writer.add_image('train/prob', np.expand_dims(prob[0][1], axis=0), step)
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
@@ -348,6 +368,8 @@ def train_seg(args, writer):
         weight = torch.from_numpy(
             np.array([1, args.edge_weight], dtype=np.float32))
         criterion = nn.NLLLoss2d(ignore_index=255, weight=weight)
+    elif args.classes == 1:
+        criterion = RMSE(ignore_index=255)
     else:
         criterion = nn.NLLLoss2d(ignore_index=255)
 
@@ -407,11 +429,10 @@ def train_seg(args, writer):
         lr = adjust_learning_rate(args, optimizer, epoch)
         print('Epoch: [{0}]\tlr {1:.06f}'.format(epoch, lr))
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, writer,
-              eval_score=accuracy)
+        train(train_loader, model, criterion, optimizer, epoch, writer) # , eval_score=accuracy)
 
         # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion, epoch, writer, eval_score=accuracy)
+        prec1 = validate(val_loader, model, criterion, epoch, writer) # , eval_score=accuracy)
 
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
