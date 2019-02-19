@@ -212,13 +212,12 @@ def validate(val_loader, model, criterion, epoch, writer, eval_score=None, print
             writer.add_scalar('validate/score_avg', score.avg, step)
             writer.add_scalar('validate/score', score.val, step)
 
-            prediction = output.detach().cpu().numpy()
-            # prob = torch.nn.functional.softmax(output.detach().cpu(), dim=1).numpy()
-            gt_img = target[0].cpu().numpy()
-            gt_img[gt_img == 255] = 1.
+            prediction = np.argmax(output.detach().cpu().numpy(), axis=1)
+            prob = torch.nn.functional.softmax(output.detach().cpu(), dim=1).numpy()
 
-            writer.add_image('validate/gt', np.expand_dims(gt_img, axis=0), step)
-            writer.add_image('validate/predicted', np.expand_dims(prediction[0][0], axis=0), step)
+            writer.add_image('validate/gt', np.expand_dims(target[0].cpu().numpy(), axis=0), step)
+            writer.add_image('validate/predicted', np.expand_dims(prediction[0], axis=0), step)
+            
             # writer.add_image('validate/prob', np.expand_dims(prob[0][1], axis=0), step)
             print('Test: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
@@ -297,6 +296,7 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
 
         input = normalize(input)
         input = input.cuda()
+        
         target = target.cuda(non_blocking=True)
         input_var = torch.autograd.Variable(input)
         target_var = torch.autograd.Variable(target)
@@ -310,7 +310,7 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
         losses.update(loss.data[0], input.size(0))
         if eval_score is not None:
             scores.update(eval_score(output, target_var), input.size(0))
-
+        
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
@@ -326,13 +326,13 @@ def train(train_loader, model, criterion, optimizer, epoch, writer,
             writer.add_scalar('train/score_avg', scores.avg, step)
             writer.add_scalar('train/score', scores.val, step)
 
-            prediction = output.detach().cpu().numpy()
+            prediction = output[0].detach().cpu().numpy()
+            prediction = np.argmax(prediction, axis=0)
             # prob = torch.nn.functional.softmax(output.detach().cpu(), dim=1).numpy()
             gt_img = target[0].cpu().numpy()
-            gt_img[gt_img == 255] = 1.
-
-            writer.add_image('train/gt', np.expand_dims(gt_img, axis=0), step)
-            writer.add_image('train/predicted', np.expand_dims(prediction[0][0], axis=0), step)
+            
+            writer.add_image('train/gt', np.expand_dims((gt_img.astype(float) * 255 / 16.).astype(int), axis=0), step)
+            writer.add_image('train/predicted', np.expand_dims((prediction.astype(float) * 255 / 16.).astype(int), axis=0), step)
             # writer.add_image('train/prob', np.expand_dims(prob[0][1], axis=0), step)
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
@@ -364,14 +364,11 @@ def train_seg(args, writer):
     single_model = dla_up.__dict__.get(args.arch)(
         args.classes, pretrained_base, down_ratio=args.down)
     model = torch.nn.DataParallel(single_model).cuda()
-    if args.edge_weight > 0:
-        weight = torch.from_numpy(
-            np.array([1, args.edge_weight], dtype=np.float32))
-        criterion = nn.NLLLoss2d(ignore_index=255, weight=weight)
-    elif args.classes == 1:
-        criterion = RMSE(ignore_index=255)
-    else:
-        criterion = nn.NLLLoss2d(ignore_index=255)
+    
+    # Regression
+#     criterion = RMSE(ignore_index=255)
+    # Classification
+    criterion = nn.NLLLoss2d(ignore_index=255)
 
     criterion.cuda()
 
@@ -390,12 +387,12 @@ def train_seg(args, writer):
               transforms.ToTensor(),
               normalize])
     train_loader = torch.utils.data.DataLoader(
-        CityscapesSingleInstanceDataset(data_dir, 'train', out_dir=args.out_dir),
+        CityscapesSingleInstanceDataset(data_dir, 'train', mode='dist_transform_cls', out_dir=args.out_dir),
         batch_size=batch_size, shuffle=True, num_workers=num_workers,
         pin_memory=True
     )
     val_loader = torch.utils.data.DataLoader(
-        CityscapesSingleInstanceDataset(data_dir, 'val', out_dir=args.out_dir),
+        CityscapesSingleInstanceDataset(data_dir, 'val', mode='dist_transform_cls', out_dir=args.out_dir),
         batch_size=batch_size, shuffle=False, num_workers=num_workers,
         pin_memory=True
     )
@@ -666,7 +663,7 @@ def test_seg(args, writer):
               transforms.ToTensor(),
               normalize])
     test_loader = torch.utils.data.DataLoader(
-        CityscapesSingleInstanceDataset(data_dir, 'val', out_dir=args.out_dir),
+        CityscapesSingleInstanceDataset(data_dir, 'val', mode='dist_transform_cls', out_dir=args.out_dir),
         batch_size=batch_size, shuffle=False, num_workers=num_workers,
         pin_memory=False
     )
@@ -746,6 +743,8 @@ def parse_args():
     parser.add_argument('--log-interval', type=int, default=1, metavar='N',
                         help='how many batches to wait before logging '
                              'training status')
+    parser.add_argument('--log-dir', type=str, default='logs',
+                        help='directory to store tensorboard logs')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('--pretrained-base', default=None,
@@ -790,7 +789,7 @@ def main():
                   'is not imported.')
 
     timestamp = datetime.fromtimestamp(time.time()).strftime('%Y%n%d-%H:%M')
-    writer = SummaryWriter('logs/{}'.format(timestamp))
+    writer = SummaryWriter('{}/{}'.format(args.log_dir, timestamp))
     if args.cmd == 'train':
         train_seg(args, writer)
     elif args.cmd == 'test':

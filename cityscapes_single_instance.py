@@ -53,8 +53,9 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         self,
         root,
         split="train",
+        mode="seg",
         is_transform=False,
-        img_size=(512, 1024),
+        img_size=(1024, 2048),
         augmentations=None,
         train_transform=Compose([RandomHorizontallyFlip(0.5)]),
         scale_transform=Compose([Resize([320, 320])]),
@@ -74,7 +75,7 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         self.augmentations = augmentations
         self.train_transform = train_transform
         self.scale_transform = scale_transform
-        
+        self.mode = mode
         self.n_classes = 8 #19
         self.img_size = (
             img_size if isinstance(img_size, tuple) else (img_size, img_size)
@@ -246,11 +247,17 @@ class CityscapesSingleInstanceDataset(data.Dataset):
         
         img, [ins] = self.scale_transform(img, [ins])
         
-        ins = distance_transform(ins)
+        if self.mode == 'boundary':
+            ins = get_boundary_map(ins)
+        elif 'dist_transform' in self.mode:
+            ins = distance_transform(ins)
         
         img = tf.to_tensor(img).float()
         ins = (tf.to_tensor(ins).float().squeeze(0))
         
+        if 'cls' in self.mode:
+            ins = ins.long()
+            
         return img, ins
     
 

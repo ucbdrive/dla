@@ -725,6 +725,8 @@ def parse_args():
     parser.add_argument('--log-interval', type=int, default=1, metavar='N',
                         help='how many batches to wait before logging '
                              'training status')
+    parser.add_argument('--log-dir', type=str, default='logs',
+                        help='directory to store tensorboard logs')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('--pretrained-base', default=None,

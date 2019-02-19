@@ -161,7 +161,7 @@ class DLASeg(nn.Module):
         x = self.base(x)
         x = self.dla_up(x[self.first_level:])
         x = self.fc(x)
-        y = self.relu(self.up(x))
+        y = self.softmax(self.up(x))
         return y, x
 
     def optim_parameters(self, memo=None):

@@ -77,7 +77,7 @@ def distance_transform_old(mask, clip_background_distance=True, normalized=True)
 
     return Image.fromarray(distance)
 
-def distance_transform(mask, maxDist=15.):
+def distance_transform(mask, reg=False, maxDist=15.):
     mask = np.asarray(mask)
     invalid = mask < 0. # {-1, 0, 1} pixel values
     foreground = mask.copy()
@@ -85,13 +85,20 @@ def distance_transform(mask, maxDist=15.):
     foreground[invalid] = 0.
     background[invalid] = 0.
 
-    foreground_dist = ndi.distance_transform_edt(foreground) / maxDist
-    background_dist = ndi.distance_transform_edt(background) / maxDist
-
-    # matches with the ignored_index value in NLLLoss
-    foreground_dist[foreground_dist > 1.] = 255
-    background_dist[background_dist > 1.] = 255
+    foreground_dist = ndi.distance_transform_edt(foreground)
+    background_dist = ndi.distance_transform_edt(background)
+        
+    if reg:
+        foreground_dist /= maxDist
+        background_dist /= maxDist
+        foreground_dist[foreground_dist > 1.] = 255
+        background_dist[background_dist > 1.] = 255
+    else:
+        foreground_dist = foreground_dist.astype(int)
+        background_dist = background_dist.astype(int)
+        foreground_dist[foreground_dist > maxDist] = int(maxDist) + 1
+        background_dist[background_dist > maxDist] = int(maxDist) + 1
 
     distance = foreground_dist * foreground + background_dist * background
-
+    
     return Image.fromarray(distance)
