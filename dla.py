@@ -146,7 +146,7 @@ class Root(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, residual):
         super(Root, self).__init__()
         self.conv = nn.Conv2d(
-            in_channels, out_channels, 1,
+            in_channels, out_channels, kernel_size,
             stride=1, bias=False, padding=(kernel_size - 1) // 2)
         self.bn = BatchNorm(out_channels)
         self.relu = nn.ReLU(inplace=True)
