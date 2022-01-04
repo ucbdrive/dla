@@ -196,7 +196,7 @@ class Tree(nn.Module):
         self.levels = levels
         if stride > 1:
             self.downsample = nn.MaxPool2d(stride, stride=stride)
-        if in_channels != out_channels:
+        if in_channels != out_channels and levels != 1:
             self.project = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels,
                           kernel_size=1, stride=1, bias=False),
@@ -245,10 +245,10 @@ class DLA(nn.Module):
                            level_root=True, root_residual=residual_root)
         self.level5 = Tree(levels[5], block, channels[4], channels[5], 2,
                            level_root=True, root_residual=residual_root)
-
-        self.avgpool = nn.AvgPool2d(pool_size)
-        self.fc = nn.Conv2d(channels[-1], num_classes, kernel_size=1,
-                            stride=1, padding=0, bias=True)
+        if not self.return_levels:
+            self.avgpool = nn.AvgPool2d(pool_size)
+            self.fc = nn.Conv2d(channels[-1], num_classes, kernel_size=1,
+                                stride=1, padding=0, bias=True)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
